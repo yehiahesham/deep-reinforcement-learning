@@ -1,12 +1,16 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import random
-from collections import namedtuple, deque
+from collections import namedtuple, deque, OrderedDict
 
 from model import QNetwork
 
-import torch
-import torch.nn.functional as F
 import torch.optim as optim
+
+
+
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
 BATCH_SIZE = 64         # minibatch size
@@ -64,6 +68,12 @@ class Agent():
             eps (float): epsilon, for epsilon-greedy action selection
         """
         state = torch.from_numpy(state).float().unsqueeze(0).to(device)
+        '''
+         model.eval() will notify all your layers that you are in eval mode, that way,
+         batchnorm or dropout layers will work in eval mode instead of training mode.
+         torch.no_grad() impacts the autograd engine and deactivate it. It will reduce memory usage and speed up computations
+         but you won’t be able to backprop (which you don’t want in an eval script).
+        '''
         self.qnetwork_local.eval()
         with torch.no_grad():
             action_values = self.qnetwork_local(state)
@@ -80,14 +90,49 @@ class Agent():
 
         Params
         ======
-            experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples 
+            experiences (Tuple[torch.Variable]): tuple of (s, a, r, s', done) tuples 
             gamma (float): discount factor
         """
         states, actions, rewards, next_states, dones = experiences
+        
+        # Get max predicted Q values (for next states) from (target model)
+        Q_targets_next = self.qnetwork_target(next_states).detach().max(1)[0].unsqueeze(1)
+        
+        # Compute Q targets for current states  (from Target Model)
+        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
 
-        ## TODO: compute and minimize the loss
-        "*** YOUR CODE HERE ***"
-
+        # Get expected Q values from (local model)
+        Q_expected = self.qnetwork_local(states).gather(1, actions)
+        
+        # Defines the Loss Func and Computes loss
+        '''This is where we make (Q_expected -  Q_targets)^2 '''
+        loss = F.mse_loss(Q_expected, Q_targets)
+        
+        # Minimize the loss
+        ''' 
+         Loss.backward(): computes dloss/dx 
+         for every parameter x which has requires_grad=True. These are 
+         accumulated into x.grad for every parameter x. In pseudo-code:
+             x.grad += dloss/dx
+         
+         
+         optimizer.step: updates the value of x using the gradient x.grad.
+         For example, the SGD optimizer performs:
+             x += -lr * x.grad
+         
+         optimizer.zero_grad(): clears x.grad for every parameter x 
+         in the optimizer. It’s important to call this before loss.backward(),
+         otherwise you’ll accumulate the gradients from multiple passes.
+         
+         If you have multiple losses (loss1, loss2) you can sum them and then
+         call backwards once:
+             loss3 = loss1 + loss2
+             loss3.backward()
+         
+        '''
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
         # ------------------- update target network ------------------- #
         self.soft_update(self.qnetwork_local, self.qnetwork_target, TAU)                     
 
